@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WhatsApp Group Exporter (Local)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--accent:#0b75ef;--bg:#f7f9fc;--card:#ffffff;--muted:#6b7280}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);margin:0;padding:20px;display:flex;justify-content:center}
+    .container{max-width:900px;width:100%}
+    h1{margin:0 0 12px 0;font-size:1.4rem}
+    .card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 6px 18px rgba(15,23,42,0.06)}
+    .row{display:flex;gap:12px;align-items:center}
+    input,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6edf3}
+    button{background:var(--accent);color:white;border:0;padding:10px 14px;border-radius:8px;cursor:pointer}
+    button[disabled]{opacity:0.6;cursor:not-allowed}
+    #qrImg{max-width:260px;border-radius:8px;border:1px dashed #e2e8f0;background:white;padding:8px;display:block}
+    .small{font-size:0.9rem;color:var(--muted)}
+    pre{background:#fbfcfe;padding:10px;border-radius:8px;border:1px solid #eef2f7;white-space:pre-wrap}
+    .flex{display:flex;gap:8px}
+    @media (max-width:640px){ .row{flex-direction:column;align-items:stretch} .flex{flex-direction:column} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WhatsApp Group Exporter — Local</h1>
+
+    <div class="card">
+      <h3>1) Link WhatsApp (QR)</h3>
+      <p class="small">Open WhatsApp on your phone → Settings → Linked devices → Link a device → scan the QR code shown below.</p>
+      <div id="qrArea">
+        <p id="qrStatus" class="small">Waiting for QR code...</p>
+        <img id="qrImg" src="" alt="QR code" style="display:none" />
+      </div>
+      <p id="authStatus" class="small"></p>
+    </div>
+
+    <div class="card">
+      <h3>2) Paste Group Invite Link</h3>
+      <input id="inviteLink" placeholder="https://chat.whatsapp.com/INVITE_CODE" />
+      <div style="margin-top:10px" class="row">
+        <button id="btnExtract">Extract Members</button>
+        <div id="extractStatus" class="small" style="margin-left:8px"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>3) Results</h3>
+      <div id="resultSummary" class="small">No results yet.</div>
+      <div style="margin-top:10px" class="flex">
+        <button id="downloadCsv" disabled>Download CSV</button>
+        <button id="downloadVcf" disabled>Download VCF</button>
+      </div>
+      <h4 style="margin-top:12px">Participants Preview</h4>
+      <pre id="participantsPreview">—</pre>
+    </div>
+
+    <div class="card small">
+      <strong>Notes & Safety</strong>
+      <ul>
+        <li>This runs <em>locally</em>. Do not publish session files or database publicly.</li>
+        <li>Using unofficial libraries risks WhatsApp detecting automation. Use for personal/research only.</li>
+        <li>If many participants are shown as names only (no phone), it may be because you have them saved in your contacts.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const qrImg = document.getElementById('qrImg');
+    const qrStatus = document.getElementById('qrStatus');
+    const authStatus = document.getElementById('authStatus');
+    const btnExtract = document.getElementById('btnExtract');
+    const inviteLinkInput = document.getElementById('inviteLink');
+    const extractStatus = document.getElementById('extractStatus');
+    const resultSummary = document.getElementById('resultSummary');
+    const participantsPreview = document.getElementById('participantsPreview');
+    const downloadCsv = document.getElementById('downloadCsv');
+    const downloadVcf = document.getElementById('downloadVcf');
+
+    socket.on('qr', (dataUrl) => {
+      qrImg.src = dataUrl;
+      qrImg.style.display = 'block';
+      qrStatus.textContent = 'Scan this QR with WhatsApp (Linked devices → Link a device).';
+      authStatus.textContent = '';
+    });
+
+    socket.on('ready', () => {
+      authStatus.textContent = 'Connected — WhatsApp client ready.';
+      qrImg.style.display = 'none';
+      qrStatus.textContent = '';
+    });
+
+    socket.on('authenticated', () => {
+      authStatus.textContent = 'Authenticated & session saved.';
+    });
+
+    socket.on('auth_failure', (msg) => {
+      authStatus.textContent = 'Auth failure: ' + (msg || '');
+    });
+
+    socket.on('disconnected', (reason) => {
+      authStatus.textContent = 'Disconnected: ' + reason;
+    });
+
+    btnExtract.addEventListener('click', async () => {
+      const link = inviteLinkInput.value && inviteLinkInput.value.trim();
+      if (!link) {
+        extractStatus.textContent = 'Please paste a group invite link.';
+        return;
+      }
+      extractStatus.textContent = 'Starting...';
+      resultSummary.textContent = 'Working...';
+      participantsPreview.textContent = '';
+      downloadCsv.disabled = true;
+      downloadVcf.disabled = true;
+
+      try {
+        const resp = await fetch('/api/extract-from-invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ link })
+        });
+        const j = await resp.json();
+        if (!j.ok) {
+          extractStatus.textContent = 'Error: ' + (j.error || JSON.stringify(j));
+          resultSummary.textContent = 'Error';
+          participantsPreview.textContent = (j.error || JSON.stringify(j, null, 2));
+          return;
+        }
+
+        extractStatus.textContent = `Extracted ${j.count} participants.`;
+        resultSummary.textContent = `Group: ${j.groupName || j.groupId} — ${j.count} participants.`;
+
+        const preview = j.participants.map(p => `${p.name || '(no name)'} — ${p.phone || '(no phone)'}`).join('\n');
+        participantsPreview.textContent = preview || 'No participants found.';
+        downloadCsv.disabled = false;
+        downloadVcf.disabled = false;
+
+      } catch (err) {
+        extractStatus.textContent = 'Request error: ' + (err.message || err);
+        resultSummary.textContent = 'Error';
+      }
+    });
+
+    downloadCsv.addEventListener('click', () => window.location.href = '/api/download/csv');
+    downloadVcf.addEventListener('click', () => window.location.href = '/api/download/vcf');
+  </script>
+</body>
+</html>
