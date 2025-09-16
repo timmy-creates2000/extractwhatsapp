@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp-group-exporter",
+  "version": "1.0.0",
+  "description": "Local WhatsApp group participant exporter using whatsapp-web.js (QR login).",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1",
+    "whatsapp-web.js": "^1.34.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
